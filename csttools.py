@@ -187,8 +187,8 @@ def convert_phase_space_monitor_data_to_hdf5(path, filenamepattern, output_filen
         for key, val in frames_and_params[0][0].items():
             dset.attrs[key] = val
 
-def convert_exported_phase_space_monitor_data_to_hdf5(main_path, filenamepattern, output_filename, 
-                                                      columns_per_frame=['z /mm', 'v_y / m/s'], 
+def convert_exported_phase_space_monitor_data_to_hdf5(main_path, output_filename, filenamepattern = '**/Frame*',
+                                                      dict_frame_columns={'x': ('z /mm', 'v_x / m/s'), 'y': ('z /mm', 'v_y / m/s'), 'z': ('z /mm', 'v_z / m/s')}, 
                                                       t_range=np.linspace(0,0.2, 100, endpoint=False)):
     '''
     Read the ASCII csv files for the PIC phase space monitor, which were exported via Post-processing steps 
@@ -200,48 +200,64 @@ def convert_exported_phase_space_monitor_data_to_hdf5(main_path, filenamepattern
     filenamepattern: str
         file name or pattern passed to `glob.glob()` to find all phase space monitor files.
     '''
-    files_to_be_parsed = glob.glob(filenamepattern, root_dir = main_path)
-    n_frames = len(files_to_be_parsed)
-    n_particles = 0
-    frames = []
-    for filename in sorted(files_to_be_parsed):
-        logging.debug(f'reading file {filename} ...')
-        frame_arr = np.loadtxt(os.path.join(main_path, filename), delimiter='\t')
-        if n_particles < frame_arr.shape[0]:
-            n_particles = frame_arr.shape[0]
-            logging.debug(f'particle number updated to {n_particles}')
-        # temp = read_parametric_CST_ASCII_format(os.path.join(path, filename))
-        frames.append(frame_arr.copy())
-    logging.debug(f'{n_frames} frames in total')
-
+    # get all sub-directories containing frames:
+    monitor_paths= set(os.path.split(path)[0] for path in glob.glob(filenamepattern, root_dir= main_path, recursive=True))
+    
     with h5py.File(os.path.join(main_path, output_filename), mode='a') as f:
-        dset = f.create_dataset('phasespace', (n_frames, n_particles, frames[1].shape[1] ),
-                                dtype=frames[1].dtype)
-        for i, frame in enumerate(frames):
-            logging.debug(f'current frame number: {i}')
-            n_particles_i = frame.shape[0]
-            if n_particles_i == dset.shape[1]:
-                dset[i, :, :] = frame
-            else:
-                dset[i, :n_particles_i, :] = frame
-                dset[i, n_particles_i:, :] = np.nan
+        for mon_p in monitor_paths:
+            # files_to_be_parsed = glob.glob(filenamepattern, root_dir = main_path)
+            files_to_be_parsed = os.listdir(os.path.join(main_path, mon_p))
 
-        # f['data'] = frames_and_params[0][1].values
-        f['col_labels'] = columns_per_frame
-        f['col_labels'].make_scale('phase space coordinates')
-        dset.dims[2].attach_scale(f['col_labels'])
+            n_frames = len(files_to_be_parsed)
+            n_particles = 0
+            frames = []
+            for filename in sorted(files_to_be_parsed):
+                logging.debug(f'reading file {mon_p}/{filename} ...')
+                frame_arr = np.loadtxt(os.path.join(main_path, mon_p, filename), delimiter='\t')
+                if n_particles < frame_arr.shape[0]:
+                    n_particles = frame_arr.shape[0]
+                    logging.debug(f'particle number updated to {n_particles}')
+                # temp = read_parametric_CST_ASCII_format(os.path.join(path, filename))
+                frames.append(frame_arr.copy())
+            logging.debug(f'{n_frames} frames in total')
 
-        f['frame_numbers'] = np.arange(n_frames)
-        f['frame_time_ns'] = t_range
-        f['frame_time_ns'].make_scale('time')
-        dset.dims[0].attach_scale(f['frame_time_ns'])
+            dset = f.create_dataset(mon_p+'/data', (n_frames, n_particles, frames[1].shape[1] ),
+                                    dtype=frames[1].dtype)
+            for i, frame in enumerate(frames):
+                logging.debug(f'current frame number: {i}')
+                n_particles_i = frame.shape[0]
+                if n_particles_i == dset.shape[1]:
+                    dset[i, :, :] = frame
+                else:
+                    dset[i, :n_particles_i, :] = frame
+                    dset[i, n_particles_i:, :] = np.nan
 
-        # for key, val in frames_and_params[0][0].items():
-        #     dset.attrs[key] = val
+            column_labels_entry = next((key for key in dict_frame_columns.keys() if key in mon_p.split()), None)
+            if not column_labels_entry is None:
+                logging.debug(f'Adding column labels for: {column_labels_entry}')
+                columns_per_frame = dict_frame_columns[column_labels_entry]
+                # f['data'] = frames_and_params[0][1].values
+                f[mon_p+'/col_labels'] = columns_per_frame
+                f[mon_p+'/col_labels'].make_scale('phase space coordinates')
+                dset.dims[2].attach_scale(f[mon_p+'/col_labels'])
 
+            logging.debug(f'Adding frame labels')
+            f[mon_p+'/frame_numbers'] = np.arange(n_frames)
+            f[mon_p+'/frame_time_ns'] = t_range
+            f[mon_p+'/frame_time_ns'].make_scale('time')
+            dset.dims[0].attach_scale(f[mon_p+'/frame_time_ns'])
 
-    
-    
+        if os.path.isfile( param_path := os.path.join(main_path, 'Parameters.txt')):
+            # this_path := os.path.join(path_conf, 'Parameters.txt')
+            logging.debug(f'Adding parameter set to attributes...')
+            import configparser
+            parser = configparser.ConfigParser()
+            with open(param_path) as stream:
+                parser.read_string("[dummy]\n" + stream.read())  # This line does the trick.
+
+            for key, val in parser['dummy'].items():
+                dset.attrs[key] = val
+                
 
 
 # Old version
