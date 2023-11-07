@@ -256,7 +256,8 @@ def convert_exported_phase_space_monitor_data_to_hdf5(main_path, output_filename
                 parser.read_string("[dummy]\n" + stream.read())  # This line does the trick.
 
             for key, val in parser['dummy'].items():
-                dset.attrs[key] = val
+                logging.debug(f'Writing attribute "{key}"')
+                f.attrs[key] = val
                 
 
 
